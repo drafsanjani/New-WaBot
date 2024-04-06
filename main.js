@@ -1,13 +1,14 @@
+// MADE BY JHNSPNTX & PAPAH-CHAN (DUO PEMBALAP)
+
 import './config.js'
 import {
-  loadConfig
-} from './config.js';
+    loadConfig
+  } from './config.js';
 import path, { join } from 'path'
 import { platform } from 'process'
 import { fileURLToPath, pathToFileURL } from 'url'
 import { createRequire } from 'module' // Bring in the ability to create the 'require' method
 global.__filename = function filename(pathURL = import.meta.url, rmPrefix = platform !== 'win32') { return rmPrefix ? /file:\/\/\//.test(pathURL) ? fileURLToPath(pathURL) : pathURL : pathToFileURL(pathURL).toString() }; global.__dirname = function dirname(pathURL) { return path.dirname(global.__filename(pathURL, true)) }; global.__require = function require(dir = import.meta.url) { return createRequire(dir) }
-import * as ws from 'ws'
 import {
     readdirSync,
     statSync,
@@ -22,25 +23,25 @@ import lodash from 'lodash'
 import syntaxerror from 'syntax-error'
 import chalk from 'chalk'
 import { tmpdir } from 'os'
+import readline from 'readline'
 import { format } from 'util'
 import pino from 'pino'
+import ws from 'ws'
 import {
     useMultiFileAuthState,
     DisconnectReason,
-    fetchLatestBaileysVersion ,
+    fetchLatestBaileysVersion, 
+    makeInMemoryStore, 
+    makeCacheableSignalKeyStore, 
+    PHONENUMBER_MCC,
     delay
-   } from '@adiwajshing/baileys'
+    } from '@adiwajshing/baileys'
 import { Low, JSONFile } from 'lowdb'
-
 import { makeWASocket, protoType, serialize } from './lib/simple.js'
-import storeSys from './lib/store-single.js'
-const store = storeSys.makeInMemoryStore()
 import {
     mongoDB,
     mongoDBV2
 } from './lib/mongoDB.js'
-import NodeCache from "node-cache"
-const msgRetryCounterCache = new NodeCache()
 
 const { CONNECTING } = ws
 const { chain } = lodash
@@ -90,32 +91,87 @@ global.loadDatabase = async function loadDatabase() {
     global.db.chain = chain(db.data)
 }
 loadDatabase()
+const useStore = !process.argv.includes('--use-store')
+const usePairingCode = !process.argv.includes('--use-pairing-code')
+const useMobile = process.argv.includes('--mobile')
 
-global.authFolder = storeSys.fixFileName(`${opts._[0] || ''}sessions`)
-    let { state, saveCreds } = await useMultiFileAuthState(path.resolve('./sessions'))
-    let { version, isLatest } = await fetchLatestBaileysVersion()
-    console.log(`using WA v${version.join('.')}, isLatest: ${isLatest}`)
-  
+var question = function(text) {
+            return new Promise(function(resolve) {
+                rl.question(text, resolve);
+            });
+        };
+const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+
+const store = useStore ? makeInMemoryStore({ level: 'silent' }) : undefined
+
+store?.readFromFile('./marin_store.json')
+// save every 10s
+setInterval(() => {
+	store?.writeToFile('./marin_store.json')
+}, 10_000)
+
+const { version, isLatest} = await fetchLatestBaileysVersion()
+const { state, saveCreds } = await useMultiFileAuthState('./sessions')
 const connectionOptions = {
-	    version,
-        printQRInTerminal: true,
-        auth: state,
-        browser: ["Marin-Kitagawa", "Safari", "5.0.0"], 
-        getMessage: async (key) => {
-        let jid = jidNormalizedUser(key.remoteJid)
-        let msg = await store.loadMessage(jid, key.id)
-        return msg?.message || ""
-    },
-    version,
-    downloadHistory: false,
-    defaultQueryTimeoutMs: undefined,
-    logger: pino({ level: 'silent' })
+        version,
+        logger: pino({ level: 'silent' }), 
+        printQRInTerminal: !usePairingCode, 
+        browser: ['Mac OS', 'Safari', '10.15.7'],
+        auth: { 
+         creds: state.creds, 
+         keys: makeCacheableSignalKeyStore(state.keys, pino().child({ 
+             level: 'silent', 
+             stream: 'store' 
+         })), 
+     },
+     getMessage: async key => {
+    		const messageData = await store.loadMessage(key.remoteJid, key.id);
+    		return messageData?.message || undefined;
+	},
+  generateHighQualityLinkPreview: true, 
+	      patchMessageBeforeSending: (message) => {
+                const requiresPatch = !!(
+                    message.buttonsMessage 
+                    || message.templateMessage
+                    || message.listMessage
+                );
+                if (requiresPatch) {
+                    message = {
+                        viewOnceMessage: {
+                            message: {
+                                messageContextInfo: {
+                                    deviceListMetadataVersion: 2,
+                                    deviceListMetadata: {},
+                                },
+                                ...message,
+                            },
+                        },
+                    };
+                }
+
+                return message;
+            }
 }
 
 global.conn = makeWASocket(connectionOptions)
 conn.isInit = false
 
-conn.logger.info(`W A I T I N G\n`);
+if(usePairingCode && !conn.authState.creds.registered) {
+		if(useMobile) throw new Error('Cannot use pairing code with mobile api')
+		const { registration } = { registration: {} }
+		let phoneNumber = ''
+		do {
+			phoneNumber = await question(chalk.blueBright('Input a Valid number start with region code. Example : 62xxx:\n'))
+		} while (!Object.keys(PHONENUMBER_MCC).some(v => phoneNumber.startsWith(v)))
+		rl.close()
+		phoneNumber = phoneNumber.replace(/\D/g,'')
+		console.log(chalk.bgWhite(chalk.blue('Generating code...')))
+		setTimeout(async () => {
+			let code = await conn.requestPairingCode(phoneNumber)
+			code = code?.match(/.{1,4}/g)?.join('-') || code
+			console.log(chalk.black(chalk.bgGreen(`Your Pairing Code : `)), chalk.black(chalk.white(code)))
+		}, 3000)
+	}
 
 if (!opts['test']) {
   (await import('./server.js')).default(PORT)
@@ -139,7 +195,7 @@ function clearTmp() {
 }
 
 async function clearSessions(folder) {
-folder = folder || './' + authFolder;
+folder = folder || './sessions' 
   try {
       const filenames = await readdirSync(folder);
       const deletedFiles = await Promise.all(filenames.map(async (file) => {
@@ -165,9 +221,9 @@ folder = folder || './' + authFolder;
 }
 
 const actions = [
-  { func: clearSessions, message: 'Clear Sessions Berhasil ✅', color: 'green' },
-  { func: loadConfig, message: 'Sukses Reload config. ✅', color: 'green' },
-];
+    { func: clearSessions, message: 'Clear Sessions Berhasil ✅', color: 'green' },
+    { func: loadConfig, message: 'Sukses Reload config. ✅', color: 'green' },
+  ];
 
 async function executeActions() {
   while (true) {
@@ -181,46 +237,56 @@ async function executeActions() {
 
 executeActions().then(() => console.log("Execution completed.")).catch(error => console.error("Error:", error)).finally(() => console.log("Finally block executed."));
 
-// Auto restart if ram usage has reached the limit, if you want to use enter the ram size in bytes
-   /*const ramCheck = setInterval(() => {
-      var ramUsage = process.memoryUsage().rss
-      if (ramUsage >= 560000000) { // 600 MB
-         clearInterval(ramCheck)
-         process.exit()
-      }
-   }, 60 * 1000) // Checking every 1 minutes
-   */
 
 async function connectionUpdate(update) {
-    const { receivedPendingNotifications, connection, lastDisconnect, isOnline, isNewLogin } = update
-  if (isNewLogin) conn.isInit = true
-  if (connection == 'connecting') console.log(chalk.redBright('⚡ Mengaktifkan Bot, Mohon tunggu sebentar...'))
-  if (connection === "open") {
-     const {
-        jid
-    } = conn.user;
-    let d = new Date(new Date + 3600000)
-    let locale = 'id'
-    let date = d.toLocaleDateString(locale, {
-      day: 'numeric',
-      month: 'long',
-      year: 'numeric',
-      timeZone: 'Asia/Jakarta'
-    })
-    conn.sendMessage('6285767373425' + "@s.whatsapp.net", { text: `⚠️LAPOR BOS⚠️\n\nBOT ONLINE\n${date}`, mentions: ["6285767373425@s.whatsapp.net", jid] });
-    conn.logger.info(chalk.yellow('\n🚩 R E A D Y'));
-}
-  if (isOnline == true) console.log(chalk.green('Status Aktif'))
-  if (isOnline == false) console.log(chalk.red('Status Mati'))
-  if (receivedPendingNotifications) console.log(chalk.yellow('Menunggu Pesan Baru'))
-  if (connection == 'close') {
-        conn.logger.error(chalk.yellow(`\n🚩 Koneksi ditutup, harap hapus folder ${global.authFile} dan pindai ulang kode QR`));
+    const { receivedPendingNotifications, connection, lastDisconnect, isOnline, isNewLogin } = update;
+    global.stopped = connection
+
+    if (isNewLogin) {
+        conn.isInit = true;
     }
-  global.timestamp.connect = new Date
-  if (lastDisconnect && lastDisconnect.error && lastDisconnect.error.output && lastDisconnect.error.output.statusCode !== DisconnectReason.loggedOut && conn.ws.readyState !== CONNECTING) {
-    console.log(global.reloadHandler(true))
-  } 
-  if (global.db.data == null) await global.loadDatabase()
+
+    if (connection == 'connecting') {
+        console.log(chalk.redBright('⚡ Mengaktifkan Bot, Mohon tunggu sebentar...'));
+    } else if (connection == 'open') {
+        const {
+            jid
+        } = conn.user;
+        let d = new Date(new Date + 3600000)
+        let locale = 'id'
+        let date = d.toLocaleDateString(locale, {
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric',
+          timeZone: 'Asia/Jakarta'
+        })
+        conn.sendMessage('6285767373425' + "@s.whatsapp.net", { text: `⚠️LAPOR BOS⚠️\n\nBOT ONLINE\n\n${date}`, mentions: ["6285767373425@s.whatsapp.net", jid] });
+        console.log(chalk.green('✅ Tersambung'));
+    }
+
+    if (isOnline == true) {
+        console.log(chalk.green('Status Aktif'));
+    } else if (isOnline == false) {
+        console.log(chalk.red('Status Mati'));
+    }
+
+    if (receivedPendingNotifications) {
+        console.log(chalk.yellow('Menunggu Pesan Baru'));
+    }
+
+    if (connection == 'close') {
+        console.log(chalk.red('⏱️ koneksi terputus & mencoba menyambung ulang...'));
+    }
+
+    global.timestamp.connect = new Date;
+
+    if (lastDisconnect && lastDisconnect.error && lastDisconnect.error.output && lastDisconnect.error.output.statusCode !== DisconnectReason.loggedOut && conn.ws.readyState !== CONNECTING) {
+        console.log(await global.reloadHandler(true));
+    }
+
+    if (global.db.data == null) {
+        await global.loadDatabase();
+    }
 }
 
 process.on('uncaughtException', console.error)
@@ -229,8 +295,14 @@ process.on('uncaughtException', console.error)
 let isInit = true
 let handler = await import('./handler.js')
 global.reloadHandler = async function (restatConn) {
+    /*try {
+        const Handler = await import(`./handler.js?update=${Date.now()}`).catch(console.error)*/
     try {
+	// Jika anda menggunakan replit, gunakan yang sevenHoursLater dan tambahkan // pada const Handler
+	// Default: server/vps/panel, replit + 7 jam buat jam indonesia
+        // const sevenHoursLater = Date.now() + 7 * 60 * 60 * 1000;
         const Handler = await import(`./handler.js?update=${Date.now()}`).catch(console.error)
+      // const Handler = await import(`./handler.js?update=${sevenHoursLater}`).catch(console.error)
         if (Object.keys(Handler || {}).length) handler = Handler
     } catch (e) {
         console.error(e)
@@ -242,7 +314,7 @@ global.reloadHandler = async function (restatConn) {
         global.conn = makeWASocket(connectionOptions, { chats: oldChats })
         isInit = true
     }    
-  if (!isInit) {
+ if (!isInit) {
     conn.ev.off('messages.upsert', conn.handler)
     conn.ev.off('group-participants.update', conn.participantsUpdate)
     conn.ev.off('message.delete', conn.onDelete)
@@ -367,6 +439,21 @@ async function _quickTest() {
     }
 
 }
+setInterval(async () => {
+  if (stopped == 'close') return        
+  const status = global.db.data.settings[conn.user.jid] || {}
+  let _uptime = process.uptime() * 1000    
+  let uptime = clockString(_uptime)
+  let bio = `Bot Aktif dalam waktu : ${uptime}`
+  await conn.updateProfileStatus(bio).catch(_ => _)
+  }, 60000)
+  function clockString(ms) {
+  let d = isNaN(ms) ? '--' : Math.floor(ms / 86400000)
+  let h = isNaN(ms) ? '--' : Math.floor(ms / 3600000) % 24
+  let m = isNaN(ms) ? '--' : Math.floor(ms / 60000) % 60
+  let s = isNaN(ms) ? '--' : Math.floor(ms / 1000) % 60
+  return [d, ' Hari ', h, ' Jam ', m, ' Menit ', s, ' Seconds '].map(v => v.toString().padStart(2, 0)).join('')}
+  
 _quickTest()
     .then(() => conn.logger.info('☑️ Quick Test Done , nama file session ~> creds.json'))
     .catch(console.error)
