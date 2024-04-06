@@ -106,7 +106,7 @@ $ pkg install ffmpeg
 $ pkg install nodejs-lts
 $ pkg install git
 $ git clone https://github.com/FahriAdison/New-WaBot
-$ cd bot-md
+$ cd New-WaBot
 $ npm i
 $ node .
 ```
