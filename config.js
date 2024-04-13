@@ -4,7 +4,7 @@ import { watchFile, unwatchFile, readFileSync } from 'fs'
 import moment from "moment-timezone"
 
 async function loadConfig() {
-global.owner = [['+6285767373425', 'jhnspntx', true],['62895612153565'], ['6282268003229'], ['6283820073017']]
+global.owner = [['+6288233989151', 'hamzar', true],['62895612153565'], ['6282268003229'], ['6283820073017']]
  // ['6283820073017', '436506665652696', '6285240750713']
   // [number, dia creator/owner?, dia developer?]
 // Put your number here
@@ -80,8 +80,8 @@ global.chara = "RWABGq1cnSiJ1a31GOwE6eK35iFTA2hKpY96UITrz0g"
 //===========> BAGIAN TEXT <==============//
 global.namaowner = 'jhnspntx'
 global.me = 'Created By jhnspntx'
-global.ownerbot = "6285767373425"
-global.nomorbot = '6289637133848'
+global.ownerbot = "6288233989151"
+global.nomorbot = '628817647193'
 global.namebot = 'Kitagawa Marin'
 global.wait = "_In progress, please wait..._"
 global.yt = "bit.ly/Papah-Chan"
